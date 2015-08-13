@@ -1,0 +1,10 @@
+{
+    "name": "node-api",
+    "main": "server.js",
+    "dependencies": {
+        "express": "~4.0.0",
+        "body-parser": "~1.0.1",
+		"xml2js": "~0.4.10",
+		"google-spreadsheet": "~1.0.1"
+    }
+}
