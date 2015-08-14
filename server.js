@@ -5,6 +5,7 @@
 var express    = require('express');        // call express
 var app        = express();                 // define our app using express
 var bodyParser = require('body-parser');
+var Worker = require('webworker-threads').Worker;
 
 // configure app to use bodyParser()
 // this will let us get the data from a POST
@@ -40,22 +41,17 @@ router.route('/service/account/:client_id/file/:file_id/sheets')
 		
 		my_sheet.useServiceAccountAuth(creds, function(err){
 			// getInfo returns info about the sheet and an array or "worksheet" objects 
-			my_sheet.getInfo( function( err, sheet_info ){
+			my_sheet.getInfo( function( err, sheet_info ){				
+				// You may also pass in a function:
+				var worker = new Worker('lib/get-sheet-titles.js');
 				
-				var response = {};
-				response.sheets = [];				
+				worker.onmessage = function(event) {
+					res.status(200).send(event.data);
+				};
 				
-				var ctr = 1;
-				sheet_info.worksheets.forEach(function(element, index){
-					response.sheets.push({
-						id: ctr++,
-						title: element.title
-					});
-				});
-				
-				res.status(200).send(response);
+				worker.postMessage(sheet_info.worksheets);
 			});
-		});
+		});		
 	});
 
 /******** GET COLUMNS OF SHEET ********/
@@ -66,30 +62,17 @@ router.route('/service/account/:client_id/file/:file_id/sheet/:sheet_id/columns'
 		var creds = require('./keys/' + req.params.client_id + '/' + req.params.client_id + '.json');
 		
 		my_sheet.useServiceAccountAuth(creds, function(err){
-			// getInfo returns info about the sheet and an array or "worksheet" objects 
-			my_sheet.getInfo( function( err, sheet_info ){
-				
-				var sheet = sheet_info.worksheets[parseInt(req.params.sheet_id) - 1]
-								
-				sheet.getRows( function( err, rows ){
-					var columns = [];
-					
-					// Parse xml to object
-					var parseString = require('xml2js').parseString;
-					var xml = rows[0]._xml;
-					parseString(xml, function (err, result) {
-						// Extract properties that have 'gsx:' prefix in it
-						for (var property in result.entry) {
-							if (result.entry.hasOwnProperty(property)) {
-								if (property.substr(0, 4) == 'gsx:'){
-									columns.push(property.substr(4));	
-								}								
-							}
-						}
-						
-						res.status(200).send(columns);
-					});
-				});		
+			// Get only first row after headers
+			my_sheet.getRows(parseInt(req.params.sheet_id), {
+				num: 1
+			}, function(err, rows){
+				var worker = new Worker('lib/get-gsx-values-from-xml.js');					
+				worker.onmessage = function(event) {
+					res.status(200).send(event.data);
+				};				
+				worker.postMessage({
+					rows: rows
+				});
 			});
 		});
 	});
@@ -101,38 +84,16 @@ router.route('/service/account/:client_id/file/:file_id/sheet/:sheet_id/data')
 		var my_sheet = new GoogleSpreadsheet(req.params.file_id);
 		var creds = require('./keys/' + req.params.client_id + '/' + req.params.client_id + '.json');
 		
-		my_sheet.useServiceAccountAuth(creds, function(err){
-			// getInfo returns info about the sheet and an array or "worksheet" objects 
-			my_sheet.getInfo( function( err, sheet_info ){
-				
-				var sheet = sheet_info.worksheets[parseInt(req.params.sheet_id) - 1]
-								
-				sheet.getRows( function( err, rows ){
-					var data = [];
-					
-					// Parse xml to object
-					var parseString = require('xml2js').parseString;
-					
-					rows.forEach(function(element){
-						var xml = element._xml;
-						parseString(xml, function (err, result) {
-							var obj = {};
-							// Extract properties that have 'gsx:' prefix in it
-							for (var property in result.entry) {
-								if (result.entry.hasOwnProperty(property)) {
-									if (property.substr(0, 4) == 'gsx:'){								
-										obj[property.substr(4)] = result.entry[property][0];
-									}								
-									
-								}
-							}
-							data.push(obj);	
-						});	
-					});										
-					
-					res.status(200).send({rows: data});
-				});		
-			});		
+		my_sheet.useServiceAccountAuth(creds, function(err){		
+			my_sheet.getRows(parseInt(req.params.sheet_id), function(err, rows){
+				var worker = new Worker('lib/get-gsx-values-from-xml.js');					
+				worker.onmessage = function(event) {
+					res.status(200).send(event.data);
+				};				
+				worker.postMessage({
+					rows: rows
+				});
+			});
 		});
 	})
 	.post(function(req, res){
@@ -157,5 +118,6 @@ app.use('/api/v1', router);
 
 // START THE SERVER
 // =============================================================================
-app.listen(port);
-console.log('Magic happens on port ' + port);
+app.listen(port, function(){
+	console.log('Magic happens on port ' + port);
+});
